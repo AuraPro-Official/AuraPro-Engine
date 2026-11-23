@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+/engine/build/
+/out*/
+/dist/
+/models/
+/components/
+/runtime/
+/profiles/
+*.part
+*.log

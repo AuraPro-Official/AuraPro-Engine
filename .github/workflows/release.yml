@@ -1,0 +1,113 @@
+name: Publish AuraPro Engine
+on:
+  push:
+    tags: ['v0.0.1']
+  workflow_dispatch:
+
+concurrency:
+  group: aurapro-engine-0.0.1
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      native: ${{ steps.matrix.outputs.native }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.0.1
+          persist-credentials: false
+      - name: Reuse or create the draft
+        run: |
+          if ! gh release view v0.0.1 >/dev/null 2>&1; then
+            gh release create v0.0.1 --verify-tag --draft --title 'AuraPro Engine 0.0.1' --notes 'First desktop integration for Windows/Linux x64 and Apple Silicon. AuraPro-maintained control code with original signed native components from Strata v0.2.20. Standard inference is unchanged.'
+          fi
+          test "$(gh release view v0.0.1 --json isDraft --jq .isDraft)" = true
+      - id: matrix
+        run: echo "native=$(python3 tools/packaging/desktop_release.py matrix)" >> "$GITHUB_OUTPUT"
+  control:
+    needs: draft
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-x86_64, runner: windows-2022 }
+          - { target: linux-x86_64, runner: ubuntu-24.04 }
+          - { target: macos-arm64, runner: macos-15 }
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.0.1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pack and smoke-test portable control
+        shell: bash
+        run: |
+          python tools/packaging/desktop_release.py control "$TARGET" --out dist
+          asset=$(find dist -maxdepth 1 -type f -name "aurapro-engine-control-*-$TARGET.*")
+          test -f "$asset"
+          mkdir smoke
+          tar -xf "$asset" -C smoke
+          runtime=smoke/python/bin/python3
+          if [ "$TARGET" = windows-x86_64 ]; then runtime=smoke/python/python.exe; fi
+          "$runtime" -B -E -s smoke/aurapro_engine.py --version
+          "$runtime" -B -E -s smoke/aurapro_engine.py models
+          "$runtime" -B -E -s smoke/desktop_runtime.py version
+          "$runtime" -B -I -c 'import os, sys, unittest; sys.path.insert(0, os.path.abspath("smoke")); sys.exit(not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("tests")).wasSuccessful())'
+          gh release upload v0.0.1 "$asset" --clobber
+  native:
+    needs: draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        asset: ${{ fromJSON(needs.draft.outputs.native) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ASSET: ${{ matrix.asset }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.0.1
+          persist-credentials: false
+      - run: |
+          asset=$(python3 tools/packaging/desktop_release.py native "$ASSET")
+          gh release upload v0.0.1 "$asset" --clobber
+  publish:
+    needs: [control, native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.0.1
+          persist-credentials: false
+      - run: |
+          set -o pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == "v0.0.1" and .draft) | .id')
+          test -n "$release"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release" | python3 tools/packaging/desktop_release.py verify
+          gh release edit v0.0.1 --draft=false
