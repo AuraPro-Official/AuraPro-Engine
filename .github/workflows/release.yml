@@ -28,9 +28,10 @@ jobs:
       - name: Reuse or create the draft
         run: |
           if ! gh release view v0.0.1 >/dev/null 2>&1; then
-            gh release create v0.0.1 --verify-tag --draft --title 'AuraPro Engine 0.0.1' --notes 'First desktop integration for Windows/Linux x64 and Apple Silicon. AuraPro-maintained control code with original signed native components from Strata v0.2.20. Standard inference is unchanged.'
+            gh release create v0.0.1 --verify-tag --draft --title 'AuraPro Engine 0.0.1' --notes 'Pro desktop integration for Windows/Linux x64.'
           fi
           test "$(gh release view v0.0.1 --json isDraft --jq .isDraft)" = true
+          gh release edit v0.0.1 --notes 'Pro desktop integration for Windows/Linux x64. Apple Silicon packages are standalone previews; macOS desktop Pro and standard inference are unchanged. AuraPro-maintained control code with original signed native components from Strata v0.2.20.'
       - id: matrix
         run: echo "native=$(python3 tools/packaging/desktop_release.py matrix)" >> "$GITHUB_OUTPUT"
   control:
@@ -45,14 +46,13 @@ jobs:
         include:
           - { target: windows-x86_64, runner: windows-2022 }
           - { target: linux-x86_64, runner: ubuntu-24.04 }
-          - { target: macos-arm64, runner: macos-15 }
+          - { target: macos-arm64, runner: ubuntu-24.04 }
     env:
       GH_TOKEN: ${{ github.token }}
       TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.1
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -71,10 +71,17 @@ jobs:
           else
             tar -xf "$asset" -C smoke
           fi
-          "$runtime" -B -E -s smoke/aurapro_engine.py --version
-          "$runtime" -B -E -s smoke/aurapro_engine.py models
-          "$runtime" -B -E -s smoke/desktop_runtime.py version
-          "$runtime" -B -I -c 'import os, sys, unittest; sys.path.insert(0, os.path.abspath("smoke")); sys.exit(not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("tests")).wasSuccessful())'
+          if [ "$TARGET" = macos-arm64 ]; then
+            # Preview only: this runner can inspect the archive but cannot run Mach-O.
+            test -x "$runtime"
+            test -s smoke/terminal/metal/tools/metal_repack.py
+            test -s smoke/terminal/metal/tools/stream_experts.py
+          else
+            "$runtime" -B -E -s smoke/aurapro_engine.py --version
+            "$runtime" -B -E -s smoke/aurapro_engine.py models
+            "$runtime" -B -E -s smoke/desktop_runtime.py version
+            "$runtime" -B -I -c 'import os, sys, unittest; sys.path.insert(0, os.path.abspath("smoke")); sys.exit(not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("tests")).wasSuccessful())'
+          fi
           gh release upload v0.0.1 "$asset" --clobber
   native:
     needs: draft

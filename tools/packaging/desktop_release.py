@@ -67,6 +67,11 @@ def control(row, engines, output):
             raise RuntimeError("Pinned control archive has no portable Python")
         shutil.copytree(ROOT / "terminal", bundle / "terminal",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
+        if row["platform"] == "macos-arm64":
+            tools = bundle / "terminal" / "metal" / "tools"
+            tools.mkdir(parents=True)
+            for name in ("metal_repack.py", "stream_experts.py"):
+                shutil.copy2(ROOT / "engine" / "metal" / "tools" / name, tools / name)
         for name in ("aurapro_engine.py", "desktop_runtime.py", "LICENSE", "UPSTREAM.json"):
             shutil.copy2(ROOT / name, bundle / name)
         (bundle / "BUNDLE.json").write_text(
