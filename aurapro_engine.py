@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 PORT = 18882
 HOST = "127.0.0.1"
 sys.path.insert(0, str(ROOT / "terminal"))

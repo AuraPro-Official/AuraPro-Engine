@@ -1,11 +1,11 @@
 name: Publish AuraPro Engine
 on:
   push:
-    tags: ['v0.0.2']
+    tags: ['v0.0.3']
   workflow_dispatch:
 
 concurrency:
-  group: aurapro-engine-0.0.2
+  group: aurapro-engine-0.0.3
   cancel-in-progress: false
 
 permissions:
@@ -23,15 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.2
+          ref: v0.0.3
           persist-credentials: false
       - name: Reuse or create the draft
         run: |
-          if ! gh release view v0.0.2 >/dev/null 2>&1; then
-            gh release create v0.0.2 --verify-tag --draft --title 'AuraPro Engine 0.0.2' --notes 'Pro desktop integration for Windows/Linux x64.'
+          if ! gh release view v0.0.3 >/dev/null 2>&1; then
+            gh release create v0.0.3 --verify-tag --draft --title 'AuraPro Engine 0.0.3' --notes 'Pro model preparation fix.'
           fi
-          test "$(gh release view v0.0.2 --json isDraft --jq .isDraft)" = true
-          gh release edit v0.0.2 --notes 'Adds the Q4_K_XL v3.1 preset and improves model download diagnostics. Retired IQ1_M and Lite presets can still start from existing installations. Apple Silicon packages remain standalone previews. AuraPro-maintained control code with original signed native components from Strata v0.2.20.'
+          test "$(gh release view v0.0.3 --json isDraft --jq .isDraft)" = true
+          gh release edit v0.0.3 --notes 'Fixes Pro model preparation failing after download because a required Python helper was missing. Downloads already verified can be reused. Native components are unchanged. Apple Silicon packages remain standalone previews.'
       - id: matrix
         run: echo "native=$(python3 tools/packaging/desktop_release.py matrix)" >> "$GITHUB_OUTPUT"
   control:
@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.2
+          ref: v0.0.3
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -72,6 +72,7 @@ jobs:
           else
             tar -xf "$asset" -C smoke
           fi
+          test -s smoke/terminal/tools/exit_with_parent.py
           if [ "$TARGET" = macos-arm64 ]; then
             # Preview only: this runner can inspect the archive but cannot run Mach-O.
             test -x "$runtime"
@@ -83,7 +84,7 @@ jobs:
             "$runtime" -B -E -s smoke/desktop_runtime.py version
             "$runtime" -B -I -c 'import os, sys, unittest; sys.path.insert(0, os.path.abspath("smoke")); sys.exit(not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("tests")).wasSuccessful())'
           fi
-          gh release upload v0.0.2 "$asset" --clobber
+          gh release upload v0.0.3 "$asset" --clobber
   native:
     needs: draft
     runs-on: ubuntu-latest
@@ -100,11 +101,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.2
+          ref: v0.0.3
           persist-credentials: false
       - run: |
           asset=$(python3 tools/packaging/desktop_release.py native "$ASSET")
-          gh release upload v0.0.2 "$asset" --clobber
+          gh release upload v0.0.3 "$asset" --clobber
   publish:
     needs: [control, native]
     runs-on: ubuntu-latest
@@ -115,11 +116,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.2
+          ref: v0.0.3
           persist-credentials: false
       - run: |
           set -o pipefail
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == "v0.0.2" and .draft) | .id')
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == "v0.0.3" and .draft) | .id')
           test -n "$release"
           gh api "repos/$GITHUB_REPOSITORY/releases/$release" | python3 tools/packaging/desktop_release.py verify
-          gh release edit v0.0.2 --draft=false
+          gh release edit v0.0.3 --draft=false --latest

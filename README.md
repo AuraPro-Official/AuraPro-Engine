@@ -14,7 +14,10 @@ Before switching the desktop app, the unified engine needs to support the
 standard models and platforms that AuraPro intends to keep. The end state is
 one inference backend, not two engines behind a shared interface.
 
-## Release 0.0.2
+## Release 0.0.3
+
+Restores a missing preparation helper so downloaded Pro models can be
+prepared without downloading the model files again.
 
 The desktop Pro installer on Windows and Linux x64 uses the AuraPro Engine
 control package. It downloads one compatible CUDA or HIP component from the
