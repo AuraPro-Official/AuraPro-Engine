@@ -12,9 +12,6 @@ MODEL_REVISIONS = {
     "unsloth/Qwen3.8-Flash-Next-GGUF": frozenset({
         "d96201194f103c906994f283f504209dc8d2a10c",
     }),
-    "unsloth/Qwen3.6-35B-A3B-MTP-GGUF": frozenset({
-        "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
-    }),
     "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF": frozenset({
         "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
     }),
@@ -27,7 +24,6 @@ _CACHE = re.compile(r"/api/resolve-cache/models/([^/]+/[^/]+)/([0-9a-f]{40})/([A
 _MTP_FILE = re.compile(r"model(?:\.safetensors\.index\.json|-[0-9]+-of-[0-9]+\.safetensors)")
 _FLASH_QUANTS = "|".join(re.escape(quant.removesuffix("-v31")) for family, quant in MODELS.values() if family == "unsloth")
 _FLASH_SHARD = re.compile(rf"({_FLASH_QUANTS})/Qwen3\.8-Flash-Next-\1-[0-9]{{5}}-of-[0-9]{{5}}\.gguf")
-_LITE_FILES = {f"Qwen3.6-35B-A3B-{quant}.gguf" for family, quant in MODELS.values() if family == "qwen36"}
 
 
 def allowed_model_ref(repo: str, revision: str) -> bool:
@@ -39,8 +35,6 @@ def allowed_model_path(repo: str, revision: str, path: str) -> bool:
         return False
     if repo == "unsloth/Qwen3.8-Flash-Next-GGUF":
         return bool(_FLASH_SHARD.fullmatch(path))
-    if repo == "unsloth/Qwen3.6-35B-A3B-MTP-GGUF":
-        return path in _LITE_FILES or path == "mmproj-F16.gguf"
     return path == "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
 
 

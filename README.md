@@ -14,7 +14,7 @@ Before switching the desktop app, the unified engine needs to support the
 standard models and platforms that AuraPro intends to keep. The end state is
 one inference backend, not two engines behind a shared interface.
 
-## Release 0.0.1
+## Release 0.0.2
 
 The desktop Pro installer on Windows and Linux x64 uses the AuraPro Engine
 control package. It downloads one compatible CUDA or HIP component from the
@@ -44,11 +44,11 @@ attribution.
 
 ## Models
 
-- Unsloth Qwen3.8-Flash-Next: `IQ1_M`, `Q2_0` (default), `IQ2_XS`, `Q2_K_XL`,
-  `IQ3_XXS`, `Q3_K_XL`, `IQ4_XS`.
-- Unsloth Qwen3.6-35B-A3B-MTP: `lite_Q4`, `lite_Q6`, on CUDA/HIP only.
-  The Strata Metal preparation path does not offer these two presets.
-  AuraPro's existing macOS llama.cpp path is unchanged.
+- Unsloth Qwen3.8-Flash-Next: `Q2_0` (default), `IQ2_XS`, `Q2_K_XL`,
+  `IQ3_XXS`, `Q3_K_XL`, `IQ4_XS`, `Q4_K_XL` (the pinned Unsloth v3.1 layout).
+- Retired `IQ1_M`, `lite_Q4` and `lite_Q6` profiles can still run offline if
+  already prepared, but cannot be downloaded again. The Lite profiles remain
+  CUDA/HIP-only in AuraPro Engine.
 
 Model weights are not included. Model licenses are separate from this
 project's source license.

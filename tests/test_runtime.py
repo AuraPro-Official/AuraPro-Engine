@@ -7,31 +7,27 @@ import time
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.request import Request
 
 import aurapro_engine as engine
 import setup
 from serve import server
-from strata_control import pro_download
+from strata_control import mac_fit, pro_download
 from tools import mtp_fetch
 
 
 class DownloadPolicyTests(unittest.TestCase):
     def test_all_presets_use_allowed_pinned_files(self):
-        self.assertEqual(len(engine.MODELS), 9)
-        self.assertNotIn("lite_Q8", engine.MODELS)
+        self.assertEqual(list(engine.MODELS), ["Q2_0", "IQ2_XS", "Q2_K_XL", "IQ3_XXS", "Q3_K_XL", "IQ4_XS", "Q4_K_XL"])
         for model, (family, quant) in engine.MODELS.items():
             with self.subTest(model=model):
-                if family == "qwen36":
-                    fam = setup.OWN_PATH_FAMILIES[family]
-                    urls = [fam["hf"] + fam["file"].format(q=quant)]
-                else:
-                    fam = setup.FAMILIES[family]
-                    urls = [
-                        setup.model_hf(fam, quant) + setup.model_file(fam, quant, i)
-                        for i in range(1, setup.model_shards(fam, quant) + 1)
-                    ]
+                fam = setup.FAMILIES[family]
+                urls = [
+                    setup.model_hf(fam, quant) + setup.model_file(fam, quant, i)
+                    for i in range(1, setup.model_shards(fam, quant) + 1)
+                ]
                 urls.append(fam["mmproj_hf"] + fam["mmproj"])
                 for url in urls:
                     pro_download.check_url(url)
@@ -41,8 +37,14 @@ class DownloadPolicyTests(unittest.TestCase):
 
     def test_block_unapproved_downloads(self):
         lite = setup.OWN_PATH_FAMILIES["qwen36"]["hf"]
+        flash = setup.FAMILIES["unsloth"]
         urls = [
+            setup.model_hf(flash, "UD-IQ1_M") + setup.model_file(flash, "UD-IQ1_M", 1),
+            setup.model_hf(flash, "UD-Q4_K_XL") + setup.model_file(flash, "UD-Q4_K_XL", 1),
+            lite + "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+            lite + "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
             lite + "Qwen3.6-35B-A3B-Q8_0.gguf",
+            lite + "mmproj-F16.gguf",
             lite.replace("huggingface.co", "modelscope.cn") + "mmproj-F16.gguf",
             lite.replace("huggingface.co", "huggingface.co.example.test") + "mmproj-F16.gguf",
             lite.replace(setup.HF_REVISIONS["unsloth/Qwen3.6-35B-A3B-MTP-GGUF"], "main") + "mmproj-F16.gguf",
@@ -53,8 +55,29 @@ class DownloadPolicyTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(PermissionError):
                 pro_download.check_url(url)
 
+    def test_q4_v31_uses_only_revised_shards_and_a_separate_profile(self):
+        family, quant = engine.MODELS["Q4_K_XL"]
+        self.assertEqual(quant, setup.UNSLOTH_V31_Q4_K_XL)
+        self.assertIn(quant, mac_fit.app_sizes(family))
+        fam = setup.FAMILIES[family]
+        base = setup.model_hf(fam, quant)
+        self.assertIn(f"/{setup.UNSLOTH_V31_REVISION}/UD-Q4_K_XL/", base)
+        self.assertEqual(setup.model_shards(fam, quant), 4)
+        for index in range(1, 5):
+            name = setup.model_file(fam, quant, index)
+            self.assertEqual(name, setup.model_file(fam, "UD-Q4_K_XL", index))
+            pin = setup.UNSLOTH_Q4_V31_SHARDS[name]
+            self.assertEqual(setup.file_pin(base + name), pin)
+            self.assertNotEqual(setup.file_pin(setup.model_hf(fam, "UD-Q4_K_XL") + name), pin)
+            with patch.object(setup, "fam_pin") as legacy_pin:
+                self.assertEqual(setup.model_shard_pin(fam, quant, Path(name)), pin)
+                legacy_pin.assert_not_called()
+        self.assertEqual(engine.profile_path(Path("data"), "Q4_K_XL").name, "strata-unsloth-ud-q4_k_xl-v31.json")
+
     def test_redirect_checks_destination_and_preserves_head(self):
-        url = setup.OWN_PATH_FAMILIES["qwen36"]["hf"] + "mmproj-F16.gguf"
+        fam = setup.FAMILIES["unsloth"]
+        url = fam["mmproj_hf"] + fam["mmproj"]
+        pro_download.check_url(url)
         redirect = pro_download.HubRedirect()
         req = Request(url, method="HEAD")
         cdn = "https://cas-bridge.xethub.hf.co/xet/object?signature=test"
@@ -80,6 +103,30 @@ class DownloadPolicyTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_model_disk_space_reports_sub_gigabyte_deficit_in_bytes(self):
+        total, free = 22_853_663_008, 22_710_263_808
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            setup.shutil, "disk_usage", return_value=SimpleNamespace(free=free)
+        ), patch.object(setup, "fail", side_effect=SystemExit(1)) as fail:
+            target = Path(tmp) / "lite_Q4.gguf"
+            with self.assertRaises(SystemExit):
+                setup.require_model_disk_space(target, total)
+            self.assertIn("need 22.854 GB, 22.710 GB free (short by 144 MB)", fail.call_args.args[0])
+            self.assertEqual(fail.call_args.kwargs, {
+                "kind": "no_space", "path": tmp, "free_bytes": free, "needed_bytes": total,
+            })
+
+    def test_model_disk_space_credits_resumable_bytes_and_keeps_partial(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            setup.shutil, "disk_usage", return_value=SimpleNamespace(free=4)
+        ), patch.object(setup, "warn"), patch.object(setup, "fail") as fail:
+            target = Path(tmp) / "model.gguf"
+            partial = target.with_name("model.gguf.part")
+            partial.write_bytes(b"GGUF")
+            setup.require_model_disk_space(target, 8)
+            fail.assert_not_called()
+            self.assertEqual(partial.read_bytes(), b"GGUF")
+
     def test_default_data_dir_preserves_early_installations(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(Path, "home", return_value=Path(tmp)):
             home = Path(tmp)
@@ -102,13 +149,34 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(os.environ["STRATA_NO_ACQUIRE"], "1")
 
     def test_prepare_is_noninteractive_and_does_not_start(self):
-        args = engine.parse_args(["prepare", "--model", "lite_Q4"])
+        args = engine.parse_args(["prepare", "--model", "Q2_0"])
         flags = engine.prepare_args(Path("local"), args)
         self.assertIn("--no-start", flags)
         self.assertIn("--no-browser", flags)
-        self.assertNotIn("--kv", flags)
-        self.assertEqual(flags[flags.index("--family") + 1], "qwen36")
-        self.assertEqual(flags[flags.index("--model") + 1], "UD-Q4_K_XL")
+        self.assertEqual(flags[flags.index("--kv") + 1], "int8")
+        self.assertEqual(flags[flags.index("--family") + 1], "unsloth")
+        self.assertEqual(flags[flags.index("--model") + 1], "UD-Q2_0")
+
+    def test_retired_models_can_only_serve_local_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "main", return_value=0) as main:
+            data = Path(tmp)
+            for model, family, quant in (
+                ("IQ1_M", "unsloth", "ud-iq1_m"),
+                ("lite_Q4", "qwen36", "ud-q4_k_xl"),
+                ("lite_Q6", "qwen36", "ud-q6_k_xl"),
+            ):
+                with self.subTest(model=model), patch("sys.stderr"):
+                    self.assertNotIn(model, engine.MODELS)
+                    with self.assertRaises(SystemExit):
+                        engine.parse_args(["prepare", "--model", model])
+                    args = engine.parse_args(["serve", "--model", model])
+                    config = engine.profile_path(data, args.model)
+                    self.assertEqual(config.name, f"strata-{family}-{quant}.json")
+                    config.parent.mkdir(exist_ok=True)
+                    config.write_text("{}", encoding="utf-8")
+                    self.assertEqual(engine.serve_model(data, args), 0)
+                    self.assertIn(str(config), main.call_args.args[0])
+                    self.assertIn("--offline", main.call_args.args[0])
 
     def test_prepare_does_not_use_another_installation(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(setup, "other_installs") as discover:

@@ -1,11 +1,11 @@
 name: Publish AuraPro Engine
 on:
   push:
-    tags: ['v0.0.1']
+    tags: ['v0.0.2']
   workflow_dispatch:
 
 concurrency:
-  group: aurapro-engine-0.0.1
+  group: aurapro-engine-0.0.2
   cancel-in-progress: false
 
 permissions:
@@ -23,15 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.1
+          ref: v0.0.2
           persist-credentials: false
       - name: Reuse or create the draft
         run: |
-          if ! gh release view v0.0.1 >/dev/null 2>&1; then
-            gh release create v0.0.1 --verify-tag --draft --title 'AuraPro Engine 0.0.1' --notes 'Pro desktop integration for Windows/Linux x64.'
+          if ! gh release view v0.0.2 >/dev/null 2>&1; then
+            gh release create v0.0.2 --verify-tag --draft --title 'AuraPro Engine 0.0.2' --notes 'Pro desktop integration for Windows/Linux x64.'
           fi
-          test "$(gh release view v0.0.1 --json isDraft --jq .isDraft)" = true
-          gh release edit v0.0.1 --notes 'Pro desktop integration for Windows/Linux x64. Apple Silicon packages are standalone previews; macOS desktop Pro and standard inference are unchanged. AuraPro-maintained control code with original signed native components from Strata v0.2.20.'
+          test "$(gh release view v0.0.2 --json isDraft --jq .isDraft)" = true
+          gh release edit v0.0.2 --notes 'Adds the Q4_K_XL v3.1 preset and improves model download diagnostics. Retired IQ1_M and Lite presets can still start from existing installations. Apple Silicon packages remain standalone previews. AuraPro-maintained control code with original signed native components from Strata v0.2.20.'
       - id: matrix
         run: echo "native=$(python3 tools/packaging/desktop_release.py matrix)" >> "$GITHUB_OUTPUT"
   control:
@@ -53,6 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: v0.0.2
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -82,7 +83,7 @@ jobs:
             "$runtime" -B -E -s smoke/desktop_runtime.py version
             "$runtime" -B -I -c 'import os, sys, unittest; sys.path.insert(0, os.path.abspath("smoke")); sys.exit(not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("tests")).wasSuccessful())'
           fi
-          gh release upload v0.0.1 "$asset" --clobber
+          gh release upload v0.0.2 "$asset" --clobber
   native:
     needs: draft
     runs-on: ubuntu-latest
@@ -99,11 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.1
+          ref: v0.0.2
           persist-credentials: false
       - run: |
           asset=$(python3 tools/packaging/desktop_release.py native "$ASSET")
-          gh release upload v0.0.1 "$asset" --clobber
+          gh release upload v0.0.2 "$asset" --clobber
   publish:
     needs: [control, native]
     runs-on: ubuntu-latest
@@ -114,11 +115,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v0.0.1
+          ref: v0.0.2
           persist-credentials: false
       - run: |
           set -o pipefail
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == "v0.0.1" and .draft) | .id')
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == "v0.0.2" and .draft) | .id')
           test -n "$release"
           gh api "repos/$GITHUB_REPOSITORY/releases/$release" | python3 tools/packaging/desktop_release.py verify
-          gh release edit v0.0.1 --draft=false
+          gh release edit v0.0.2 --draft=false

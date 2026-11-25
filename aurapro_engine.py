@@ -10,11 +10,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.0.1"
+VERSION = "0.0.2"
 PORT = 18882
 HOST = "127.0.0.1"
 sys.path.insert(0, str(ROOT / "terminal"))
-from strata_control.pro_catalog import DEFAULT_MODEL, MODELS
+from strata_control.pro_catalog import DEFAULT_MODEL, MODELS, SERVE_MODELS
 
 
 def default_data_dir() -> Path:
@@ -46,7 +46,7 @@ def configure_environment(data: Path, *, prepare: bool, backend: str) -> None:
 
 
 def profile_path(data: Path, model: str) -> Path:
-    family, quant = MODELS[model]
+    family, quant = SERVE_MODELS[model]
     return data / "profiles" / f"strata-{family}-{quant.lower()}.json"
 
 
@@ -109,7 +109,7 @@ def parse_args(argv=None):
     prepare = commands.add_parser("prepare", help="Download and prepare a selected model")
     serve = commands.add_parser("serve", help="Serve a prepared model on loopback")
     for command in (prepare, serve):
-        command.add_argument("--model", choices=MODELS, default=DEFAULT_MODEL)
+        command.add_argument("--model", choices=MODELS if command is prepare else SERVE_MODELS, default=DEFAULT_MODEL)
         command.add_argument("--backend", choices=("auto", "cuda", "hip", "metal"), default="auto")
     prepare.add_argument("--vision", choices=("yes", "no"), default="yes")
     prepare.add_argument("--context", type=int, choices=(8192, 16384, 32768, 65536, 131072, 262144), default=32768)
@@ -138,7 +138,7 @@ def main(argv=None) -> int:
         backends = {"windows-x86_64": ("cuda", "hip"), "linux-x86_64": ("cuda", "hip"), "macos-arm64": ("metal",)}
         if target not in backends or args.backend not in ("auto", *backends[target]):
             raise ValueError(f"Unsupported engine backend {args.backend} on {target}")
-        if target == "macos-arm64" and MODELS[args.model][0] == "qwen36":
+        if target == "macos-arm64" and SERVE_MODELS[args.model][0] == "qwen36":
             raise ValueError("The Strata Metal preparation path does not support the lite presets")
         if args.command == "prepare":
             engine = engine_component.resolve(root=data / "components", full=True)

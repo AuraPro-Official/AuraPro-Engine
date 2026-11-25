@@ -353,12 +353,11 @@ CODER_FILES = {
         (907543008, "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0"),
 }
 
-# Round 0214: Unsloth re-published the repository on 2026-11-04 (commit d9620119, "Dynamic v3.1").  The files of UD-Q4_K_XL, UD-IQ4_XS (three shards),
-# UD-Q5_K_XL, UD-Q6_K_XL and Q8_0 stay at the commit in HF_REVISIONS (38bb39ee, pinned since 0.1.31); the sets that are new there (UNSLOTH_V31_SHARDS) name this
-# commit in their MODELS entry ("revision"), so a repository has more than one revision and the pin of a file is found by the commit its URL names (file_pin).
+# Keep the original Q4 layout addressable, and pin the new layouts by their Hub revision.
 UNSLOTH_REPO = "unsloth/Qwen3.8-Flash-Next-GGUF"
 UNSLOTH_V31_REVISION = "d96201194f103c906994f283f504209dc8d2a10c"          # 2026-11-04
 UNSLOTH_V31_IQ4_XS = "UD-IQ4_XS-v31"      # the catalog name of the new UD-IQ4_XS (its files on the Hub have the pinned one's names, with four shards instead of three)
+UNSLOTH_V31_Q4_K_XL = "UD-Q4_K_XL-v31"    # Same Hub names as the original Q4, but a separate storage tag.
 UNSLOTH_V31_ENGINE = (0, 1, 57)       # the engine that ships with these sets (i-quant experts with Q2_0 / IQ4_NL / Q5_0 downs, a Q6_K dense side)
 
 MODELS = {
@@ -435,6 +434,10 @@ MODELS = {
     UNSLOTH_V31_IQ4_XS: {"about": "~4-bit i-quant (Unsloth Dynamic v3.1), a newer file than UD-IQ4_XS with other tensor types", "download_gb": 93.7, "ram_gb": 48, "arena_gb": 60.4, "families": ("unsloth",), "budget": True,
                          "shards": 4, "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00004.gguf", "quant": "UD-IQ4_XS",
                          "revision": UNSLOTH_V31_REVISION, "engine": UNSLOTH_V31_ENGINE, "vision": True, "uma_pool_auto": True},
+    UNSLOTH_V31_Q4_K_XL: {"about": "4-bit (Unsloth Dynamic v3.1), with a separate n-gram shard",
+                          "download_gb": 111.3, "ram_gb": 48, "arena_gb": 77.0, "families": ("unsloth",), "budget": True,
+                          "shards": 4, "quant": "UD-Q4_K_XL", "revision": UNSLOTH_V31_REVISION,
+                          "engine": UNSLOTH_V31_ENGINE, "vision": True},
     # MODEL-UPDATE Phase 4: NVFP4 experts, ready-made packs (NVFP4_REPOS).  63.3 GiB (68.0 GB) of experts in the
     # pack's experts.bin; the low-RAM mode reads them from there on a PC whose RAM does not hold them.  NVIDIA only
     # (the HIP and SYCL engines have no NVFP4 kernels).  Images: both packs keep Qwen's vision tower unquantized, so the
@@ -591,9 +594,7 @@ UNSLOTH_V31_SHARDS = {
     "Qwen3.8-Flash-Next-UD-IQ4_XS-00004-of-00004.gguf":
         (28800138432, "5de8b5dbf89409acc39468decafd4a4a95b13c29d88a14b0356107897829ec36"),
 }
-# UD-Q4_K_XL as re-sharded at UNSLOTH_V31_REVISION: the same 1224 tensors, the n-gram table in a shard of its own.  The file names are the pinned UD-Q4_K_XL's, so these are
-# NOT downloaded: setup keeps fetching the pinned files, and takes this layout from files already here (--gguf-dir, --model-path, the app's "Use a local GGUF") by size and
-# SHA-256 (fam_pin).  One set or the other: the shard boundaries differ, so the shards of the two cannot be mixed.
+# UD-Q4_K_XL re-sharded at UNSLOTH_V31_REVISION. These file names also exist at the original revision.
 UNSLOTH_Q4_V31_SHARDS = {
     "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf":
         (10946618, "acc44040f74d0e55fb89c3967056cce5dbda1bcc52e909c3ba6fc72b5e9c0858"),
@@ -2286,6 +2287,15 @@ def fam_pin(fam: dict, s: Path) -> tuple:
     return pin
 
 
+def model_shard_pin(fam: dict, model: str, shard: Path, own: bool = False) -> tuple:
+    """For managed downloads, a revised catalog entry accepts only the selected revision."""
+    if MODELS[model].get("revision") and not own:
+        pin = file_pin(model_hf(fam, model) + shard.name)
+        if pin is not None:
+            return pin
+    return fam_pin(fam, shard)
+
+
 def model_shards(fam: dict, model: str) -> int:
     return MODELS.get(model, {}).get("shards", fam.get("shards", 2))
 
@@ -2293,9 +2303,13 @@ def model_shards(fam: dict, model: str) -> int:
 def budget_model(cfg: dict) -> str:
     """The Unsloth model a config with a RAM budget runs, from its --native shard's name (UD-Q4_K_XL by default)."""
     a = cfg.get("args", [])
-    native = Path(a[a.index("--native") + 1]).name.upper() if "--native" in a and a.index("--native") + 1 < len(a) \
-        else ""
+    shard = Path(a[a.index("--native") + 1]) if "--native" in a and a.index("--native") + 1 < len(a) else Path()
+    native = shard.name.upper()
     mine = [m for m, d in MODELS.items() if d.get("budget") and f"-{model_quant(m).upper()}-" in native]
+    for model in mine:
+        tag = FAMILIES["unsloth"]["tag"] + model
+        if shard.parent.name.casefold() == tag.casefold():
+            return model
     if len(mine) > 1:                                  # the pinned UD-IQ4_XS (three shards) and the v3.1 one (four): the shard count in the name tells them apart
         count = re.search(r"-OF-(\d{5})\.GGUF$", native)
         mine = [m for m in mine if count and MODELS[m].get("shards") == int(count.group(1))] or mine
@@ -2558,6 +2572,30 @@ def find_tool(name):
 def free_gb(path):
     path.mkdir(parents=True, exist_ok=True)
     return shutil.disk_usage(path).free / 1e9
+
+
+def require_model_disk_space(target: Path, total: int) -> None:
+    """Check remaining bytes for a pinned file without discarding a partial download."""
+    if target.is_file() and target.stat().st_size == total:
+        return  # download() verifies a full file even when its finish mark is missing.
+    part = target.with_name(target.name + ".part")
+    partial = part.stat().st_size if part.is_file() else 0
+    needed = total - partial if 0 <= partial <= total else total
+    if not needed:
+        return
+    folder = target.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(folder).free
+    if free < needed:
+        short = (needed - free + 999_999) // 1_000_000
+        fail(
+            f"not enough free disk space in {folder}: need {needed / 1e9:.3f} GB, "
+            f"{free / 1e9:.3f} GB free (short by {short:,} MB)",
+            "Free disk space on this drive, then retry. Existing downloads are kept.",
+            kind="no_space", path=str(folder), free_bytes=free, needed_bytes=needed,
+        )
+    if free < needed + 1_000_000_000:
+        warn(f"little free disk space in {folder}: {free / 1e9:.3f} GB free for {needed / 1e9:.3f} GB of files")
 
 
 def disk_room_problem(models_dir, pack_dir, other_gb, copy_gb, other_note="", free=None):
@@ -9647,14 +9685,10 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
     if a.gguf_dir and not gguf.exists():
         gguf = own_path_gguf_in(folder) or gguf        # #5869: the person's own file under another name (the importer checked its types)
     size = fam["sha256"][published][0]
-    part = gguf.with_name(gguf.name + ".part")
     def have(p: Path) -> bool:                         # --gguf-dir: the person's own file has no finish mark; verify_sha256 checks and writes it
         return p.exists() and (done(p) or bool(a.gguf_dir))
-    left = 0 if have(gguf) else (size - (part.stat().st_size if part.is_file() else 0)) / 1e9
-    if left and free_gb(folder) < left:
-        fail(f"not enough free disk space in {folder}: need ~{left:.0f} GB, {free_gb(folder):.0f} GB free", ("use --data-dir on a bigger drive (strata launch --data-dir)" if CONTROL else "use --models-dir on a bigger drive"))
-    if left and free_gb(folder) < left + 1:
-        warn(f"little free disk space in {folder}: {free_gb(folder):.1f} GB free for about {left:.1f} GB. Setup goes on and should fit")
+    if not a.gguf_dir and not have(gguf):
+        require_model_disk_space(gguf, size)
 
     step(3, "Python packages")
     pip_install(runtime_packages(),
@@ -9699,6 +9733,7 @@ def install_own_path(a, family, gpu, hip, amd, cuda_tk, multi, port, ram, adopte
         else:
             if a.gguf_dir:
                 fail(f"{mmproj} is missing", f"put {mmproj.name} in {folder}, or drop --gguf-dir to download it")
+            require_model_disk_space(mmproj, fam["sha256"][mmproj.name][0])
             download(fam["mmproj_hf"] + mmproj.name, mmproj, "vision encoder")
         verify_sha256(mmproj, *fam["sha256"][mmproj.name], own=bool(a.gguf_dir))
         ok(f"vision encoder: {mmproj}")
@@ -10853,6 +10888,9 @@ def mac_control_setup(a) -> int:
                 continue
             download(model_hf(fam, model) + s.name, s)
     check_shards(files)
+    if model == UNSLOTH_V31_Q4_K_XL and not a.gguf_dir:
+        for shard in files:
+            verify_sha256(shard, *model_shard_pin(fam, model, shard))
     ok("model files present")
     mmproj = None
     if vision != "none":
@@ -11674,7 +11712,7 @@ def main() -> int:
         confirm_paging(model, ram, a.low_ram, a.yes, bool(a.model))
     ok(f"size: {model}")
     from strata_control import gpu_fit
-    _q4 = gpu_fit.strix_q4_stall_note(model, [gpu] if isinstance(gpu, dict) else (gpu or []))   # REMOVE with the Strix stall fix (see gpu_fit.STRIX_Q4_NOTE)
+    _q4 = gpu_fit.strix_q4_stall_note(model_quant(model), [gpu] if isinstance(gpu, dict) else (gpu or []))   # REMOVE with the Strix stall fix (see gpu_fit.STRIX_Q4_NOTE)
     if _q4:
         warn(_q4)
     if MODELS[model].get("license"):                   # the ready-made packs: each size has its own license
@@ -11947,7 +11985,7 @@ def main() -> int:
         check_shards(shards)
     for s in ([] if ready else shards):                # the Unsloth files: pinned sizes and SHA-256
         if s.name in fam.get("sha256", {}):
-            verify_sha256(s, *fam_pin(fam, s), own=bool(a.gguf_dir))
+            verify_sha256(s, *model_shard_pin(fam, model, s, own=bool(a.gguf_dir)), own=bool(a.gguf_dir))
     ok("model files present")
     mmproj = Path(a.models_dir) / fam.get("mmproj", MMPROJ)
     if not mmproj.exists():                            # an earlier install's copy (the same file for every family)

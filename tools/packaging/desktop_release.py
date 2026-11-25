@@ -1,4 +1,4 @@
-"""Assemble 0.0.1 desktop assets from this checkout and the pinned upstream builds."""
+"""Assemble desktop release assets from this checkout and the pinned upstream builds."""
 
 import argparse
 import hashlib
